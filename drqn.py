@@ -215,35 +215,38 @@ if __name__ == "__main__":
     config.gpu_options.allow_growth = True
     sess = tf.Session(config=config)
     K.set_session(sess)
-
-    game = DoomGame()
-    game.load_config("../../scenarios/defend_the_center.cfg")
-    game.set_sound_enabled(True)
-    game.set_screen_resolution(ScreenResolution.RES_640X480)
-    game.set_window_visible(False)
-    game.init()
     
-    game.new_episode()
-    game_state = game.get_state()
-    misc = game_state.game_variables  # [KILLCOUNT, AMMO, HEALTH]
-    prev_misc = misc
+#    game.new_episode()
+#    game_state = game.get_state()
+#    misc = game_state.game_variables  # [KILLCOUNT, AMMO, HEALTH]
+#    prev_misc = misc
+    # add episode definition
+    # ath to folder
+    path = ''
+    files = sorted(glob.glob(path+'*.jpg'))
+    episode_length = len(files)
+    frame_cnt = 1
+    
     
     action_size = game.get_available_buttons_size()
     
-    img_rows , img_cols = 64, 64
+    img_rows , img_cols = 224, 224
     img_channels = 3 # Color channel
     trace_length = 4 # Temporal Dimension
-    
+    action_size = 6
     state_size = (trace_length, img_rows, img_cols, img_channels)
     agent = RecurrentDQNAgent(state_size, action_size, trace_length)
     
     agent.model = drqn(state_size, action_size, agent.learning_rate)
     #agent.target_model = drqn(state_size, action_size, agent.learning_rate)
     
-    s_t = game_state.screen_buffer # 480 x 640
+    #s_t = game_state.screen_buffer # 480 x 640
+    # frame
+    s_t = cv2.imread(files[frame_cnt])
+    s_t = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     s_t = preprocessImg(s_t, size=(img_rows, img_cols))
     
-    is_terminated = game.is_episode_finished()
+    is_terminated = (frame_cnt == episode_length)
     
     # Start training
     epsilon = agent.initial_epsilon
@@ -254,7 +257,7 @@ if __name__ == "__main__":
     episode_buf = [] # Save entire episode
     
     # Buffer to compute rolling statistics 
-    life_buffer, ammo_buffer, kills_buffer = [], [], [] 
+#    life_buffer, ammo_buffer, kills_buffer = [], [], [] 
     
     while not game.is_episode_finished():
         
@@ -274,41 +277,39 @@ if __name__ == "__main__":
         a_t[action_idx] = 1
         
         a_t = a_t.astype(int)
+        # perform action : Move the box
         game.set_action(a_t.tolist())
-        skiprate = agent.frame_per_action
-        game.advance_action(skiprate)
         
+        # check again if another frame exist
         game_state = game.get_state()  # Observe again after we take the action
         is_terminated = game.is_episode_finished()
+        # according set episode finished
         
+        # iou score
         r_t = game.get_last_reward()  #each frame we get reward of 0.1, so 4 frames will be 0.4
         
         if (is_terminated):
             if (life > max_life):
                 max_life = life
             GAME += 1
-            life_buffer.append(life)
-            ammo_buffer.append(misc[1])
-            kills_buffer.append(misc[0])
-            print ("Episode Finish ", misc)
+            print ("Episode Finish ")
+            # start again
             game.new_episode()
             game_state = game.get_state()
-            misc = game_state.game_variables
+            
             s_t1 = game_state.screen_buffer
             
         s_t1 = game_state.screen_buffer
         misc = game_state.game_variables
         s_t1 = preprocessImg(s_t1, size=(img_rows, img_cols))
         
+        # just shaping the previous reward
         r_t = agent.shape_reward(r_t, misc, prev_misc, t)
         
         if (is_terminated):
             life = 0
         else:
             life += 1
-            
-        #update the cache
-        prev_misc = misc
         
         # Update epsilon
         if agent.epsilon > agent.final_epsilon and t > agent.observe:
@@ -346,24 +347,3 @@ if __name__ == "__main__":
             print("TIME", t, "/ GAME", GAME, "/ STATE", state, \
                   "/ EPSILON", agent.epsilon, "/ ACTION", action_idx, "/ REWARD", r_t, \
                   "/ Q_MAX %e" % np.max(Q_max), "/ LIFE", max_life, "/ LOSS", loss)
-            
-            # Save Agent's Performance Statistics
-            if GAME % agent.stats_window_size == 0 and t > agent.observe: 
-                print("Update Rolling Statistics")
-                agent.mavg_score.append(np.mean(np.array(life_buffer)))
-                agent.var_score.append(np.var(np.array(life_buffer)))
-                agent.mavg_ammo_left.append(np.mean(np.array(ammo_buffer)))
-                agent.mavg_kill_counts.append(np.mean(np.array(kills_buffer)))
-                
-                # Reset rolling stats buffer
-                life_buffer, ammo_buffer, kills_buffer = [], [], [] 
-                
-                # Write Rolling Statistics to file
-                with open("statistics/drqn_stats.txt", "w") as stats_file:
-                    stats_file.write('Game: ' + str(GAME) + '\n')
-                    stats_file.write('Max Score: ' + str(max_life) + '\n')
-                    stats_file.write('mavg_score: ' + str(agent.mavg_score) + '\n')
-                    stats_file.write('var_score: ' + str(agent.var_score) + '\n')
-                    stats_file.write('mavg_ammo_left: ' + str(agent.mavg_ammo_left) + '\n')
-                    stats_file.write('mavg_kill_counts: ' + str(agent.mavg_kill_counts) + '\n')
-
